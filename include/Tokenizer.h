@@ -14,7 +14,8 @@ class Tokenizer{
         static std::vector<std::string> sentence_tokenizer(const std::string& text);
         static std::vector<std::string> regex_tokenizer(const std::string& text, const std::string& pattern);
 
-        static std::vector<std::string> print_tokens(const std::vector<std::string>& tokens);
+        // function to print tokens to an output stream
+        void print_tokens(const std::vector<std::string>& tokens, std::ostream& os) const;
 };
 
 
