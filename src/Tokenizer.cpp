@@ -1,14 +1,57 @@
 #include "../include/Tokenizer.h"
 #include <sstream>
+#include <cctype>
 #include <iostream>
+#include <unordered_set>
+#include <fstream>
+
+const std::unordered_set<std::string> contractions = {
+    "n't", "'ll", "'ve", "'re", "'d", "'m", "'s", "'t", "-"
+};
 
 std::vector<std::string> Tokenizer::whitespace_tokenizer(const std::string& text) {
     std::vector<std::string> tokens;
-    std::istringstream stream(text);
-    std::string word;
+    tokens.reserve(text.size() / 5);
 
-    while (stream >> word) {
-        tokens.push_back(word);
+    size_t start = 0, length = 0;
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        char current_char = text[i];
+
+        if (std::isspace(current_char)) {
+            if (length > 0) {
+                tokens.emplace_back(text.substr(start, length));
+                length = 0;
+            }
+        } 
+        else if (std::ispunct(current_char)) {
+            if (current_char == '\'' && i + 1 < text.size()) {
+                std::string suffix = text.substr(i);
+
+                for (const auto& contraction : contractions) {
+                    if (suffix.substr(0, contraction.size()) == contraction) {
+                        length += contraction.length();
+                        i += contraction.length() - 1;
+                        break;
+                    }
+                }
+            } 
+            else {
+                if (length > 0) {
+                    tokens.emplace_back(text.substr(start, length));
+                    length = 0;
+                }
+                tokens.emplace_back(std::string(1, current_char));
+            }
+        } 
+        else {
+            if (length == 0) start = i;
+            length++;
+        }
+    }
+
+    if (length > 0) {
+        tokens.emplace_back(text.substr(start, length));
     }
 
     return tokens;
@@ -92,11 +135,10 @@ std::vector<std::string> Tokenizer::regex_tokenizer(const std::string& text, con
     return tokens;
 }
 
-std::vector<std::string> Tokenizer::print_tokens(const std::vector<std::string>& tokens) {
-    for(const std::string& token : tokens){
-        std::cout << token << " | ";
+void Tokenizer::print_tokens(const std::vector<std::string>& tokens, std::ostream& out) const {
+    for (const auto& token : tokens) {
+        out << "[" << token << "] ";
     }
-    std::cout << std::endl;
-    return tokens;
+    out << std::endl;  
 }
 
