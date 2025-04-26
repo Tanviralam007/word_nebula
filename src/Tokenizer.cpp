@@ -2,136 +2,131 @@
 #include <sstream>
 #include <cctype>
 #include <iostream>
-#include <unordered_set>
-#include <fstream>
+#include <array>
 
-const std::unordered_set<std::string> contractions = {
-    "n't", "'ll", "'ve", "'re", "'d", "'m", "'s", "'t", "-"
-};
+// Initialize the static contraction matcher
+const Tokenizer::ContractionMatcher Tokenizer::contractions;
 
-std::vector<std::string> Tokenizer::whitespace_tokenizer(const std::string& text) {
-    std::vector<std::string> tokens;
-    tokens.reserve(text.size() / 5);
-
-    size_t start = 0, length = 0;
-
-    for (size_t i = 0; i < text.size(); ++i) {
-        char current_char = text[i];
-
-        if (std::isspace(current_char)) {
-            if (length > 0) {
-                tokens.emplace_back(text.substr(start, length));
-                length = 0;
-            }
-        } 
-        else if (std::ispunct(current_char)) {
-            if (current_char == '\'' && i + 1 < text.size()) {
-                std::string suffix = text.substr(i);
-
-                for (const auto& contraction : contractions) {
-                    if (suffix.substr(0, contraction.size()) == contraction) {
-                        length += contraction.length();
-                        i += contraction.length() - 1;
-                        break;
-                    }
-                }
-            } 
-            else {
-                if (length > 0) {
-                    tokens.emplace_back(text.substr(start, length));
-                    length = 0;
-                }
-                tokens.emplace_back(std::string(1, current_char));
-            }
-        } 
-        else {
-            if (length == 0) start = i;
-            length++;
-        }
-    }
-
-    if (length > 0) {
-        tokens.emplace_back(text.substr(start, length));
-    }
-
-    return tokens;
-}
-
-std::vector<std::string> Tokenizer::word_tokenizer(const std::string& text) {
-    std::vector<std::string> tokens;
-    std::string token;
-
-    for(char ch : text){
-        if(std::isalpha(ch)){
-            token += ch;
-        }else{
-            if(!token.empty()){
-                tokens.push_back(token);
-                token.clear();
-            }
-            if(!std::isspace(ch)){
-                tokens.push_back(std::string(1, ch));
-            }
-        }
-    }
-
-    if(!token.empty()){
-        tokens.push_back(token);
-    }
-
-    return tokens;
-}
-
-std::vector<std::string> Tokenizer::char_tokenizer(const std::string& text) {
-    std::vector<std::string> tokens;
-
-    for(char ch : text){
-        tokens.push_back(std::string(1, ch));
-    }
-    return tokens;
-}
-
-std::vector<std::string> Tokenizer::subword_tokenizer(const std::string& text) {
-    std::vector<std::string> tokens;
+// Implementation of ContractionMatcher constructor
+Tokenizer::ContractionMatcher::ContractionMatcher() {
+    // Initialize root node
+    root = std::make_unique<TrieNode>();
     
-    // breaking words into halves
-    for(size_t i = 0; i < text.length(); i += 2){
-        std::string subword = text.substr(i, 2);
-        tokens.push_back(subword);
+    // Common English contractions
+    const std::array<std::string_view, 9> contraction_list = {
+        "n't", "'ll", "'ve", "'re", "'d", "'m", "'s", "'t", "-"
+    };
+    
+    // Build trie
+    for (const auto& contraction : contraction_list) {
+        TrieNode* current = root.get();
+        for (char c : contraction) {
+            if (!current->children[c]) {
+                current->children[c] = std::make_unique<TrieNode>();
+            }
+            current = current->children[c].get();
+        }
+        current->is_terminal = true;
     }
-    return tokens;
 }
 
-std::vector<std::string> Tokenizer::sentence_tokenizer(const std::string& text) {
-    std::vector<std::string> tokens;
-    std::string sentence;
-
-    for(char ch : text){
-        if(ch == '.' || ch == '!' || ch == '?'){
-            tokens.push_back(sentence);
-            sentence.clear();
-        }else{
-            sentence += ch;
+// Returns the length of the matched contraction, or 0 if no match
+size_t Tokenizer::ContractionMatcher::match_contraction(std::string_view text) const {
+    const TrieNode* current = root.get();
+    size_t match_length = 0;
+    
+    for (size_t i = 0; i < text.length(); ++i) {
+        char c = text[i];
+        auto it = current->children.find(c);
+        if (it == current->children.end()) {
+            break;
+        }
+        
+        current = it->second.get();
+        if (current->is_terminal) {
+            match_length = i + 1;
         }
     }
-
-    if(!sentence.empty()){
-        tokens.push_back(sentence);
-    }
-    return tokens;
+    
+    return match_length;
 }
 
-std::vector<std::string> Tokenizer::regex_tokenizer(const std::string& text, const std::string& pattern) {
+std::vector<std::string> Tokenizer::whitespace_tokenizer(std::string_view text) {
     std::vector<std::string> tokens;
-    std::regex regex(pattern);
-    std::sregex_token_iterator iter(text.begin(), text.end(), regex, -1);
-    std::sregex_token_iterator end;
-
-    while(iter != end){
-        tokens.push_back(*iter);
-        ++iter;
+    // More accurate reservation based on average English word length (5 chars) + spaces
+    tokens.reserve(text.length() / 6);
+    
+    // State machine states
+    enum class State { WHITESPACE, WORD, PUNCTUATION };
+    State state = State::WHITESPACE;
+    
+    size_t token_start = 0;
+    
+    for (size_t i = 0; i < text.length(); ++i) {
+        char c = text[i];
+        
+        // Determine character type
+        bool is_space = std::isspace(c);
+        bool is_punct = std::ispunct(c);
+        
+        switch (state) {
+            case State::WHITESPACE:
+                if (!is_space) {
+                    token_start = i;
+                    state = is_punct ? State::PUNCTUATION : State::WORD;
+                }
+                break;
+                
+            case State::WORD:
+                if (is_space) {
+                    // End of word
+                    tokens.emplace_back(text.substr(token_start, i - token_start));
+                    state = State::WHITESPACE;
+                }
+                else if (is_punct) {
+                    // Handle apostrophes for contractions
+                    if (c == '\'') {
+                        // Check if this is the start of a contraction
+                        size_t contraction_length = contractions.match_contraction(text.substr(i));
+                        if (contraction_length > 0) {
+                            i += contraction_length - 1;
+                            continue;
+                        }
+                    }
+                    
+                    // End word and start punctuation
+                    tokens.emplace_back(text.substr(token_start, i - token_start));
+                    token_start = i;
+                    state = State::PUNCTUATION;
+                }
+                break;
+                
+            case State::PUNCTUATION:
+                if (is_space) {
+                    // End of punctuation
+                    tokens.emplace_back(text.substr(token_start, i - token_start));
+                    state = State::WHITESPACE;
+                }
+                else if (!is_punct) {
+                    // End punctuation and start word
+                    tokens.emplace_back(text.substr(token_start, i - token_start));
+                    token_start = i;
+                    state = State::WORD;
+                }
+                else if (c != text[token_start]) {
+                    // New punctuation character
+                    tokens.emplace_back(text.substr(token_start, i - token_start));
+                    token_start = i;
+                }
+                break;
+        }
     }
-
+    
+    // Handle remaining token
+    if (state != State::WHITESPACE) {
+        tokens.emplace_back(text.substr(token_start));
+    }
+    
     return tokens;
 }
 
@@ -139,6 +134,5 @@ void Tokenizer::print_tokens(const std::vector<std::string>& tokens, std::ostrea
     for (const auto& token : tokens) {
         out << "[" << token << "] ";
     }
-    out << std::endl;  
+    out << std::endl;
 }
-
